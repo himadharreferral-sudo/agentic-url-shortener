@@ -1,0 +1,12 @@
+project_id = "replace-with-your-gcp-project-id"
+region     = "us-central1"
+
+# Bootstrap image only. Replace with the pushed Artifact Registry URI before
+# running a full terraform apply.
+image = "us-docker.pkg.dev/cloudrun/container/hello"
+
+# Leave empty for the first service apply. Set to `terraform output -raw service_url`
+# and apply again so generated short links use the public Cloud Run URL.
+public_base_url = ""
+
+allow_unauthenticated = true

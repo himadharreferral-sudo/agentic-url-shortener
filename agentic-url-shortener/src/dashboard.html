@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <title>URL Shortener SRE Dashboard</title>
+  <style>
+    :root {
+      font-family: Inter, "Segoe UI", Arial, sans-serif;
+      color: #e7edf7;
+      background: #0b1220;
+      font-synthesis: none;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-width: 320px; }
+    header {
+      display: flex; align-items: center; justify-content: space-between;
+      gap: 20px; padding: 22px clamp(18px, 4vw, 56px);
+      border-bottom: 1px solid #25334a; background: #101a2b;
+    }
+    h1 { font-size: 21px; margin: 0 0 5px; letter-spacing: .2px; }
+    .subtitle, .muted { color: #91a1b9; font-size: 13px; }
+    .status-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .pill { border: 1px solid #35445c; border-radius: 999px; padding: 7px 11px; font-size: 12px; }
+    .ok { color: #6ee7a8; border-color: #266443; background: #102a22; }
+    .bad { color: #ff8e8e; border-color: #7d3434; background: #321b22; }
+    main { max-width: 1440px; margin: 0 auto; padding: 26px clamp(18px, 4vw, 56px) 42px; }
+    .toolbar { display: flex; justify-content: space-between; align-items: center; gap: 12px; margin-bottom: 18px; }
+    button { color: #dce8f8; background: #1b2a40; border: 1px solid #3a4b64; border-radius: 8px; padding: 9px 13px; cursor: pointer; }
+    button:hover { background: #243752; }
+    .cards { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; }
+    .card, .panel { background: #111c2d; border: 1px solid #25344b; border-radius: 12px; }
+    .card { min-height: 148px; padding: 18px; }
+    .card-label { text-transform: uppercase; letter-spacing: 1px; color: #91a1b9; font-size: 11px; font-weight: 700; }
+    .value { font-size: clamp(26px, 3vw, 38px); line-height: 1.15; font-weight: 700; margin: 13px 0 8px; }
+    .value small { color: #9cacc1; font-size: 15px; font-weight: 500; }
+    .detail { color: #a7b5c9; font-size: 12px; line-height: 1.55; }
+    .charts { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-top: 14px; }
+    .panel { padding: 18px; min-height: 210px; }
+    .panel h2 { font-size: 14px; margin: 0 0 4px; }
+    .chart { width: 100%; height: 130px; display: block; margin-top: 12px; }
+    .chart .grid { stroke: #26354b; stroke-width: 1; }
+    .chart .line { fill: none; stroke-width: 2.5; stroke-linecap: round; stroke-linejoin: round; }
+    .chart .area { opacity: .13; }
+    .bar { height: 8px; overflow: hidden; border-radius: 9px; background: #27364b; margin-top: 9px; }
+    .bar span { display: block; height: 100%; width: 0; background: #51d6a0; transition: width .25s ease; }
+    .bar.warn span { background: #f3bb59; }
+    .bar.danger span { background: #f07178; }
+    .footnote { margin-top: 16px; padding: 13px 15px; border: 1px solid #3b3546; border-radius: 10px; background: #1d1b29; color: #c5bbd2; font-size: 12px; line-height: 1.55; }
+    .error { color: #ff9999; }
+    @media (max-width: 900px) { .cards { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+    @media (max-width: 580px) {
+      header, .toolbar { align-items: flex-start; flex-direction: column; }
+      .cards, .charts { grid-template-columns: 1fr; }
+      .card { min-height: 130px; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div>
+      <h1>URL Shortener · SRE Dashboard</h1>
+      <div class="subtitle">Golden signals · rolling 1-hour view · refreshes every 5 seconds</div>
+    </div>
+    <div class="status-row">
+      <span class="pill" id="live-status">Liveness: checking</span>
+      <span class="pill" id="ready-status">Database: checking</span>
+      <span class="pill" id="circuit-status">Circuit: checking</span>
+    </div>
+  </header>
+  <main>
+    <div class="toolbar">
+      <div class="muted" id="updated">Waiting for first sample…</div>
+      <button id="refresh" type="button">Refresh now</button>
+    </div>
+    <section class="cards" aria-label="SRE golden signals">
+      <article class="card">
+        <div class="card-label">Traffic</div>
+        <div class="value"><span id="traffic">—</span> <small>req/s</small></div>
+        <div class="detail"><span id="requests">—</span> application requests in the rolling window</div>
+      </article>
+      <article class="card">
+        <div class="card-label">Errors</div>
+        <div class="value"><span id="error-rate">—</span><small>% 5xx</small></div>
+        <div class="detail"><span id="error-count">—</span> server errors · client 4xx responses are not counted as server errors</div>
+      </article>
+      <article class="card">
+        <div class="card-label">Response time</div>
+        <div class="value"><span id="p95">—</span><small> ms p95</small></div>
+        <div class="detail">p50 <span id="p50">—</span> ms · histogram bucket approximation · <span id="latency-samples">0</span> samples</div>
+      </article>
+      <article class="card">
+        <div class="card-label">Saturation</div>
+        <div class="value"><span id="inflight">—</span><small> in flight</small></div>
+        <div class="detail"><span id="threads">—</span> active process threads · cache <span id="cache-count">—</span></div>
+        <div class="bar" id="cache-bar"><span id="cache-fill"></span></div>
+        <div class="detail" id="cache-label">LRU cache utilization</div>
+      </article>
+    </section>
+    <section class="charts">
+      <article class="panel">
+        <h2>Traffic rate</h2>
+        <div class="muted">Requests per second · recent dashboard samples</div>
+        <svg class="chart" id="traffic-chart" viewBox="0 0 600 130" role="img" aria-label="Traffic rate history"></svg>
+      </article>
+      <article class="panel">
+        <h2>5xx error rate</h2>
+        <div class="muted">Percent of application requests returning server errors</div>
+        <svg class="chart" id="error-chart" viewBox="0 0 600 130" role="img" aria-label="Server error rate history"></svg>
+      </article>
+    </section>
+    <div class="footnote">
+      Example objectives only: 99.9% availability and 100 ms redirect p95 are not validated SLOs.
+      Saturation here shows in-flight requests, process threads, and LRU occupancy; CPU, memory, and
+      a hard concurrency limit are not instrumented by this single-process prototype.
+      Startup this run: <strong id="startup">—</strong> ms.
+    </div>
+    <div class="detail error" id="load-error" role="status"></div>
+  </main>
+  <script>
+    (function () {
+      const history = [];
+      const maxPoints = 720;
+      const refreshMs = 5000;
+      const byId = (id) => document.getElementById(id);
+      const displayMs = (seconds) => seconds === null || seconds === undefined ? "—" :
+        typeof seconds === "string" ? ">5000" : (seconds * 1000).toFixed(0);
+
+      function setStatus(id, label, good) {
+        const element = byId(id);
+        element.textContent = label;
+        element.className = "pill " + (good ? "ok" : "bad");
+      }
+
+      function drawChart(id, values, color) {
+        const svg = byId(id);
+        const width = 600, height = 130, pad = 8;
+        if (!values.length) {
+          svg.innerHTML = '<line class="grid" x1="0" y1="110" x2="600" y2="110"></line>';
+          return;
+        }
+        const max = Math.max(1, ...values);
+        const points = values.map((value, index) => {
+          const x = values.length === 1 ? width : index * width / (values.length - 1);
+          const y = height - pad - ((Math.max(0, value) / max) * (height - 2 * pad));
+          return x.toFixed(1) + "," + y.toFixed(1);
+        }).join(" ");
+        const areaPoints = "0," + height + " " + points + " " + width + "," + height;
+        svg.innerHTML =
+          '<line class="grid" x1="0" y1="32" x2="600" y2="32"></line>' +
+          '<line class="grid" x1="0" y1="72" x2="600" y2="72"></line>' +
+          '<line class="grid" x1="0" y1="112" x2="600" y2="112"></line>' +
+          '<polygon class="area" fill="' + color + '" points="' + areaPoints + '"></polygon>' +
+          '<polyline class="line" stroke="' + color + '" points="' + points + '"></polyline>';
+      }
+
+      async function refresh() {
+        byId("load-error").textContent = "";
+        try {
+          const responses = await Promise.all([
+            fetch("/api/v1/observability", { cache: "no-store" }),
+            fetch("/ready", { cache: "no-store" }),
+            fetch("/health", { cache: "no-store" })
+          ]);
+          if (!responses[0].ok) throw new Error("Metrics request returned HTTP " + responses[0].status);
+          const data = await responses[0].json();
+          const ready = responses[1].ok;
+          const health = responses[2].ok ? await responses[2].json() : null;
+          const saturation = data.saturation;
+
+          setStatus("live-status", responses[2].ok ? "Liveness: up" : "Liveness: down", responses[2].ok);
+          setStatus("ready-status", ready ? "Database: ready" : "Database: not ready", ready);
+          setStatus("circuit-status", "Circuit: " + (data.circuit_breaker || (health && health.circuit) || "unknown"),
+            (data.circuit_breaker || (health && health.circuit)) === "CLOSED");
+
+          byId("traffic").textContent = data.traffic.requests_per_second.toFixed(2);
+          byId("requests").textContent = data.traffic.requests;
+          byId("error-rate").textContent = data.errors.rate_percent.toFixed(2);
+          byId("error-count").textContent = data.errors.server_errors;
+          byId("p50").textContent = displayMs(data.latency.p50_seconds_approx);
+          byId("p95").textContent = displayMs(data.latency.p95_seconds_approx);
+          byId("latency-samples").textContent = data.latency.sample_count;
+          byId("inflight").textContent = saturation.in_flight_requests;
+          byId("threads").textContent = saturation.active_threads;
+          byId("cache-count").textContent = saturation.cache_entries + " / " + saturation.cache_capacity;
+          const utilization = saturation.cache_utilization_ratio * 100;
+          byId("cache-fill").style.width = Math.min(100, utilization).toFixed(1) + "%";
+          byId("cache-label").textContent = "LRU cache utilization · " + utilization.toFixed(1) + "%";
+          byId("cache-bar").className = "bar" + (utilization >= 95 ? " danger" : utilization >= 80 ? " warn" : "");
+          byId("startup").textContent = data.startup_duration_seconds === null ? "—" :
+            (data.startup_duration_seconds * 1000).toFixed(1);
+          const windowLabel = data.window_seconds >= 60 ?
+            Math.floor(data.window_seconds / 60) + "m" : data.window_seconds + "s";
+          byId("updated").textContent = "Updated " + new Date(data.timestamp * 1000).toLocaleTimeString() +
+            " · rolling window " + windowLabel;
+
+          history.push({
+            traffic: data.traffic.requests_per_second,
+            errors: data.errors.rate_percent
+          });
+          if (history.length > maxPoints) history.shift();
+          drawChart("traffic-chart", history.map((point) => point.traffic), "#53d6a2");
+          drawChart("error-chart", history.map((point) => point.errors), "#f07882");
+        } catch (error) {
+          byId("load-error").textContent = "Dashboard could not load metrics: " + error.message;
+          setStatus("live-status", "Metrics: unavailable", false);
+        }
+      }
+
+      byId("refresh").addEventListener("click", refresh);
+      refresh();
+      window.setInterval(refresh, refreshMs);
+    }());
+  </script>
+</body>
+</html>
